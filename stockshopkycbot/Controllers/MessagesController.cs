@@ -7,6 +7,10 @@ using System.Web.Http;
 using System.Web.Http.Description;
 using Microsoft.Bot.Connector;
 using Newtonsoft.Json;
+using Microsoft.Bot.Builder.Dialogs;
+using Microsoft.Bot.Builder.FormFlow;
+using stockshopkycbot.Service;
+using System.Text;
 
 namespace stockshopkycbot
 {
@@ -17,17 +21,43 @@ namespace stockshopkycbot
         /// POST: api/Messages
         /// Receive a message from a user and reply to it
         /// </summary>
+        /// 
+
+        internal static IDialog<KYC> MakeRootDialog()
+        {
+            return Chain.From(() => FormDialog.FromForm(KYC.BuildLocalizedForm))
+                .Do(async (context, state) =>
+                {
+                    try
+                    {
+                        var completed = await state;
+                        var ficaChecking = await new FicaService().FicaID(new Id_check() { country_code = "ZA", first_name = completed.Name, identity_number = completed.IdNumber, surname = completed.Surname });
+                        string responseBody = await ficaChecking.Content.ReadAsStringAsync();
+                        ficaChecking.Content = new StringContent(responseBody, Encoding.UTF8, "application/json");
+
+                        await context.PostAsync(responseBody);
+                    }
+                    catch (FormCanceledException<KYC> e)
+                    {
+                        string reply;
+                        if (e.InnerException == null)
+                        {
+                            reply = $"You quit on {e.Last}--maybe you can finish next time!";
+                        }
+                        else
+                        {
+                            reply = "Sorry, I've had a short circuit.  Please try again.";
+                        }
+                        await context.PostAsync(reply);
+
+                    }
+                });
+        }
         public async Task<HttpResponseMessage> Post([FromBody]Activity activity)
         {
             if (activity.Type == ActivityTypes.Message)
             {
-                ConnectorClient connector = new ConnectorClient(new Uri(activity.ServiceUrl));
-                // calculate something for us to return
-                int length = (activity.Text ?? string.Empty).Length;
-
-                // return our reply to the user
-                Activity reply = activity.CreateReply($"You sent {activity.Text} which was {length} characters");
-                await connector.Conversations.ReplyToActivityAsync(reply);
+                await Conversation.SendAsync(activity, MakeRootDialog);
             }
             else
             {
